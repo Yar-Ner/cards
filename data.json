@@ -1,20 +1,4 @@
-[
-  {
-    "id": 1,
-    "question": "Как дела?",
-    "answer": "Все прекрасно!",
-    "flag": false
-  },
-  {
-    "id": 2,
-    "question": "Па",
-    "answer": "Ма",
-    "flag": false
-  },
-  {
-    "id": 3,
-    "question": "м",
-    "answer": "л",
-    "flag": false
-  }
-]
+{
+  "users": [],
+  "cards": []
+}

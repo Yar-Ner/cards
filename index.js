@@ -4,53 +4,125 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
-// Хостинг сам передаст порт в переменную process.env.PORT. Если её нет — включится 3000
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 
-// Путь к твоему JSON файлу с карточками
-const jsonFilePath = path.join(__dirname, 'data.json'); 
+app.use(cors());
+app.use(express.json()); // Чтение JSON-данных
 
-// Настраиваем middleware
-app.use(cors()); // Разрешаем запросы с фронтенда (Angular)
-app.use(express.json()); // Включаем поддержку чтения JSON из тела запроса (body)
+const dataPath = path.join(__dirname, 'data.json');
 
-// 1. GET: Отдаем карточки из JSON файла
+// Безопасное чтение БД
+function readData() {
+  try {
+    if (!fs.existsSync(dataPath)) {
+      return { users: [], cards: [] };
+    }
+    const raw = fs.readFileSync(dataPath, 'utf8');
+    const db = JSON.parse(raw);
+    
+    if (!db.users) db.users = [];
+    if (!db.cards) db.cards = [];
+    
+    return db;
+  } catch (e) {
+    return { users: [], cards: [] };
+  }
+}
+
+// Запись в БД
+function writeData(data) {
+  fs.writeFileSync(dataPath, JSON.stringify(data, null, 2), 'utf8');
+}
+
+// 1. РЕГИСТРАЦИЯ
+app.post('/api/register', (req, res) => {
+  const { username, email, password } = req.body || {};
+  
+  if (!username || !email || !password) {
+    return res.status(400).json({ message: 'Заполните все поля!' });
+  }
+
+  const db = readData();
+
+  const userExists = db.users.find(u => u.email === email);
+  if (userExists) {
+    return res.status(400).json({ message: 'Пользователь с такой почтой уже существует' });
+  }
+
+  const newId = db.users.length > 0 ? (db.users[db.users.length - 1].id + 1) : 1;
+
+  const newUser = {
+    id: newId,
+    username,
+    email,
+    password
+  };
+
+  db.users.push(newUser);
+  writeData(db);
+
+  res.status(201).json({ id: newUser.id, username: newUser.username });
+});
+
+// 2. АВТОРИЗАЦИЯ (ВХОД)
+app.post('/api/login', (req, res) => {
+  const { email, password } = req.body || {};
+
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Введите почту и пароль!' });
+  }
+
+  const db = readData();
+
+  const user = db.users.find(u => u.email === email && u.password === password);
+  if (!user) {
+    return res.status(401).json({ message: 'Неверная почта или пароль' });
+  }
+
+  res.json({ id: user.id, username: user.username });
+});
+
+// 3. ПОЛУЧЕНИЕ КАРТОЧЕК
 app.get('/api/cards', (req, res) => {
-  fs.readFile(jsonFilePath, 'utf8', (err, data) => {
-    if (err) {
-      console.error('Ошибка чтения файла:', err);
-      return res.status(500).json({ error: 'Не удалось прочитать базу данных' });
-    }
-    
-    // Парсим строку из файла в JS-массив и отправляем на фронт
-    try {
-      const cards = JSON.parse(data || '[]');
-      res.json(cards);
-    } catch (parseErr) {
-      res.status(500).json({ error: 'Файл JSON поврежден' });
-    }
-  });
+  const userId = parseInt(req.query.userId);
+  if (!userId) {
+    return res.status(400).json({ message: 'userId не указан' });
+  }
+
+  const db = readData();
+  const userCards = db.cards.filter(card => card.userId === userId);
+  res.json(userCards);
 });
 
-// 2. POST: Принимаем обновленный массив от Angular и полностью перезаписываем JSON
+// 4. СОХРАНЕНИЕ / СИНХРОНИЗАЦИЯ КАРТОЧЕК
 app.post('/api/cards', (req, res) => {
-  const updatedCards = req.body; // Тут лежит массив cards, прилетевший из Angular
+  const userId = parseInt(req.query.userId);
+  const newCards = req.body;
 
-  // Превращаем массив обратно в красивую строку JSON
-  const jsonString = JSON.stringify(updatedCards, null, 2);
+  if (!userId) {
+    return res.status(400).json({ message: 'userId не указан' });
+  }
 
-  fs.writeFile(jsonFilePath, jsonString, 'utf8', (err) => {
-    if (err) {
-      console.error('Ошибка записи в файл:', err);
-      return res.status(500).json({ error: 'Не удалось сохранить данные' });
-    }
-    
-    console.log('Файл cards.json успешно обновлен!');
-    res.status(200).json({ message: 'Данные успешно синхронизированы' });
-  });
+  const db = readData();
+
+  // Удаляем старые карточки этого пользователя
+  db.cards = db.cards.filter(card => card.userId !== userId);
+
+  // Привязываем новые
+  if (Array.isArray(newCards)) {
+    const preparedCards = newCards.map(card => ({
+      id: card.id,
+      question: card.question,
+      answer: card.answer,
+      userId: userId
+    }));
+    db.cards.push(...preparedCards);
+  }
+
+  writeData(db);
+  res.json({ success: true });
 });
 
-// Запуск сервера
 app.listen(PORT, () => {
-  console.log(`Сервер запущен и ждет запросов на http://localhost:${PORT}`);
+  console.log(`Сервер запущен на http://localhost:${PORT}`);
 });
